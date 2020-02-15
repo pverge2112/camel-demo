@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="        http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd        http://camel.apache.org/schema/spring       http://camel.apache.org/schema/spring/camel-spring.xsd">
+    <bean class="org.mycompany.processor.MailAttachmentProcessor" id="mailAttachmentProcessor"/>
+    <bean class="org.mycompany.processor.AttachmentProcessor" id="fileAttachmentProcessor"/>
+    <bean class="org.mycompany.processor.ExcelFileProcessor" id="excelFileProcessor"/>
+    <bean class="org.mycompany.processor.IssueReportProcessor" id="issueReportProcessor"/>
+    <bean class="org.mycompany.aggregator.ArrayListAggregrationStrategy" id="myStrategy"/>
+    <bean class="org.apache.camel.component.jpa.JpaComponent" id="jpa">
+        <property name="entityManagerFactory" ref="entityManagerFactory"/>
+        <property name="transactionManager" ref="transactionManager"/>
+    </bean>
+    <camelContext id="camel" streamCache="true" xmlns="http://camel.apache.org/schema/spring">
+        <dataFormats>
+            <json id="json" library="Jackson"
+                unmarshalTypeName="org.mycompany.model.JiraIssue" useList="true"/>
+        </dataFormats>
+        <!-- This route polls a specified gmail account for unread messages with an attachment filtered by subject -->
+        <route id="mailPoller">
+            <from id="_pollMail" uri="imaps://{{imap.host}}:{{imap.port}}?username={{imap.username}}&amp;password={{imap.password}}                         &amp;delete=false&amp;unseen=true&amp;delay=5000&amp;searchTerm.subjectOrBody=Jira Issues"/>
+            <to id="_toMailAttachProcessor" uri="bean:mailAttachmentProcessor"/>
+            <to id="_log1" uri="log:newmail"/>
+        </route>
+        <!-- This route polls an inbox directory for specific file extension (*.xlxs), 
+		     processes the file (extracts jira ids) and calls a route to invoke a jira api -->
+        <route id="fileInboxPoller">
+            <from id="_filePollInbox" uri="file:files/inbox?include=.*.xlsx&amp;delete=true&amp;delay=1000"/>
+            <to id="_toExcelprocessor" uri="bean:excelFileProcessor"/>
+            <choice id="_choice1">
+                <when id="_when1">
+                    <simple>${headers.jiraIDs} != null</simple>
+                    <to id="_toJiraAPIGet" uri="direct:jira-api-get"/>
+                </when>
+            </choice>
+        </route>
+        <!-- This route invokes a mock jira api which returns a json reponse 
+             which is unmarshaled to JiraIssue pojos and persisted to a database using JPA -->
+        <route id="jira-api-get">
+            <from id="_jiraAPI" uri="direct:jira-api-get"/>
+            <log id="_logJiraIDs" message="JIRA IDs: ${headers.jiraIDs}"/>
+            <setHeader headerName="CamelHttpMethod" id="_setHeader1">
+                <constant>GET</constant>
+            </setHeader>
+            <setHeader headerName="IDs" id="_setHeader2">
+                <simple>${headers.jiraIDs}</simple>
+            </setHeader>
+            <to id="_getJiraIssues" uri="http4://amock.io/api/tester6005/rest/api/3/issue/{issueIDs}"/>
+            <log id="_logAPIResponse" loggingLevel="INFO" message="RECEIVED JIRA API CALL response: ${body}"/>
+            <unmarshal id="_unmarshal1">
+                <custom ref="json"/>
+            </unmarshal>
+            <split id="_split1" streaming="true">
+                <simple>${body}</simple>
+                <to id="_toJPA" uri="jpa://org.mycompany.model.JiraIssue"/>
+                <log id="_logSavedJiraIssues" message="Saved Jira Issue: ${body}"/>
+            </split>
+        </route>
+        <!-- This route is a polling db consumer that polls a db every 5 seconds 
+             looking for processed messages that need to be put into a report -->
+        <route id="generateJiraReport">
+            <from id="_fromIssuePoll" uri="jpa://org.mycompany.model.JiraIssue?namedQuery=selectQuery&amp;consumer.delay=5000&amp;consumeDelete=false"/>
+            <aggregate completionInterval="2000" completionSize="10"
+                id="_aggregate1" strategyRef="myStrategy">
+                <correlationExpression>
+                    <constant>true</constant>
+                </correlationExpression>
+                <to id="_toIssueReportProcessor" uri="bean:issueReportProcessor"/>
+                <log id="_logReportCreated" message="Report created!"/>
+            </aggregate>
+        </route>
+        <route id="sendEmailJiraReportAttachment">
+            <from id="_filePollOutbox" uri="file:files/outbox?include=.*.docx&amp;delete=true&amp;delay=1000&amp;sendEmptyMessageWhenIdle=true"/>
+            <choice id="_choice2">
+                <when id="_when2">
+                    <simple>${body} != null</simple>
+                    <setHeader headerName="from" id="_setHeaderFrom">
+                        <simple>{{email.from}}</simple>
+                    </setHeader>
+                    <setHeader headerName="to" id="_setHeaderTo">
+                        <simple>{{smtp.username}}</simple>
+                    </setHeader>
+                    <setHeader headerName="subject" id="_setHeaderSubject">
+                        <constant>Jira Issue Report</constant>
+                    </setHeader>
+                    <setHeader headerName="contentType" id="_setHeaderContentType">
+                        <constant>text/plain</constant>
+                    </setHeader>
+                    <process id="_processFileAttachment" ref="fileAttachmentProcessor"/>
+                    <to id="_sendMail" uri="smtps://{{smtp.host}}:{{smtp.port}}?username={{smtp.username}}&amp;password={{smtp.password}}"/>
+                    <log id="_logReportSent" message="Report sent"/>
+                </when>
+            </choice>
+        </route>
+    </camelContext>
+</beans>
