@@ -1,8 +1,18 @@
-# Spring-Boot Camel QuickStart
+# Spring-Boot Camel Demo
 
-This example demonstrates how you can use Apache Camel with Spring Boot.
+This example demonstrates how you can use Apache Camel with Spring Boot.  In this example, a fictitious workflow starts with an email having an attached excel spreadsheet containing JiraIDs is sent to an email account.  A route using the Mail component, polls the email account for unread emails having the subject 'Jira Issues'.  The route invokes a processor (MailAttachmentProcessor) which looks for an attachment and if one exists, it's saved to a file in the files/inbox folder as whatever file name was given to the attachment.
 
-The quickstart uses Spring Boot to configure a little application that includes a Camel route that triggers a message every 5th second, and routes the message to a log.
+A second route using the File component, polls the files/inbox folder for specific file extensions (*.xlxs).  If a file with this extension exists, it's picked up, processed and deleted.  Processing is done by invoking a processor bean that uses the Apache POI library to parse the excel file and pull out the list of Jira IDs and return them in an outbound exchange header. Conditional logic routes the message (containing the Jira ID header) to another route if the JiraID header is not empty.
+
+A third route which is invoked directly from the second route, calls an external mocked API, passing the JiraIDs which returns a JSON response.  The JSON response is unmarshaled to JiraIssue pojo list, split using the Splitter EIP pattern and persisted to an in-memory H2 database table (Issues) with a status set to 'P' (processed).
+
+A fourth route uses a timer based JPA consumer to poll the Issues table for records having a status of 'P' (processed) and using an aggregation strategy (ArrayList), combines the records into a list of JiraIssue pojos and updates the status in the database to 'D' delivered.  The list of JiraIssue pojos is passed to a processor (IssueReportProcessor) that uses the Apach POI library to build a word (.docx) document report named JiraIssueReport.docx and places a file named JiraIssueReport.docx in the files/outbox folder.
+
+A fifth and final route polls the files/outbox folder for files having the *.docx extension, generates an email and sends it along with the attached report to a configured email account.
+
+
+The demo uses several camel components (Mail, File, HTTP4, JPA) to access local and external resources along with several EIP patterns (Splitter and Aggregator.
+
 
 ### Building
 
@@ -10,40 +20,7 @@ The example can be built with
 
     mvn clean install
 
-### Running the example in OpenShift
+### Running the example locally
+The example can be run locally with
 
-It is assumed that:
-- OpenShift platform is already running, if not you can find details how to [Install OpenShift at your site](https://docs.openshift.com/container-platform/3.3/install_config/index.html).
-- Your system is configured for Fabric8 Maven Workflow, if not you can find a [Get Started Guide](https://access.redhat.com/documentation/en/red-hat-jboss-middleware-for-openshift/3/single/red-hat-jboss-fuse-integration-services-20-for-openshift/)
-
-The example can be built and run on OpenShift using a single goal:
-
-    mvn fabric8:deploy
-
-When the example runs in OpenShift, you can use the OpenShift client tool to inspect the status
-
-To list all the running pods:
-
-    oc get pods
-
-Then find the name of the pod that runs this quickstart, and output the logs from the running pods with:
-
-    oc logs <name of pod>
-
-You can also use the OpenShift [web console](https://docs.openshift.com/container-platform/3.3/getting_started/developers_console.html#developers-console-video) to manage the
-running pods, and view logs and much more.
-
-### Running via an S2I Application Template
-
-Application templates allow you deploy applications to OpenShift by filling out a form in the OpenShift console that allows you to adjust deployment parameters.  This template uses an S2I source build so that it handle building and deploying the application for you.
-
-First, import the Fuse image streams:
-
-    oc create -f https://raw.githubusercontent.com/jboss-fuse/application-templates/GA/fis-image-streams.json
-
-Then create the quickstart template:
-
-    oc create -f https://raw.githubusercontent.com/jboss-fuse/application-templates/GA/quickstarts/spring-boot-camel-template.json
-
-Now when you use "Add to Project" button in the OpenShift console, you should see a template for this quickstart. 
-
+    mvn spring-boot:run

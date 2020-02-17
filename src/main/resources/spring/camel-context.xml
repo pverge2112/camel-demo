@@ -17,12 +17,12 @@
         </dataFormats>
         <!-- This route polls a specified gmail account for unread messages with an attachment filtered by subject -->
         <route id="mailPoller">
-            <from id="_pollMail" uri="imaps://{{imap.host}}:{{imap.port}}?username={{imap.username}}&amp;password={{imap.password}}                         &amp;delete=false&amp;unseen=true&amp;delay=5000&amp;searchTerm.subjectOrBody=Jira Issues"/>
+            <from id="_pollMail" uri="imaps://{{imap.host}}:{{imap.port}}?username={{imap.username}}&amp;password={{imap.password}}                                                                &amp;delete=false&amp;unseen=true&amp;delay=5000&amp;searchTerm.subjectOrBody=Jira Issues"/>
             <to id="_toMailAttachProcessor" uri="bean:mailAttachmentProcessor"/>
-            <to id="_log1" uri="log:newmail"/>
+            <to id="_logMailAttachment" uri="log:newmail"/>
         </route>
-        <!-- This route polls an inbox directory for specific file extension (*.xlxs), 
-		     processes the file (extracts jira ids) and calls a route to invoke a jira api -->
+        <!-- This route polls an inbox directory for a specific file extension (*.xlxs), 
+		     processes the excel file using Apache POI (extracts jira ids) and sends the responsev(Jira IDs) to a route to invoke a jira api -->
         <route id="fileInboxPoller">
             <from id="_filePollInbox" uri="file:files/inbox?include=.*.xlsx&amp;delete=true&amp;delay=1000"/>
             <to id="_toExcelprocessor" uri="bean:excelFileProcessor"/>
@@ -33,8 +33,8 @@
                 </when>
             </choice>
         </route>
-        <!-- This route invokes a mock jira api which returns a json reponse 
-             which is unmarshaled to JiraIssue pojos and persisted to a database using JPA -->
+        <!-- This route invokes a mock jira api created at http://amock.io/ which returns a json reponse 
+             which is unmarshaled to JiraIssue pojos and persisted to an in memory H2 database using JPA -->
         <route id="jira-api-get">
             <from id="_jiraAPI" uri="direct:jira-api-get"/>
             <log id="_logJiraIDs" message="JIRA IDs: ${headers.jiraIDs}"/>
@@ -44,7 +44,7 @@
             <setHeader headerName="IDs" id="_setHeader2">
                 <simple>${headers.jiraIDs}</simple>
             </setHeader>
-            <to id="_getJiraIssues" uri="http4://amock.io/api/tester6005/rest/api/3/issue/{issueIDs}"/>
+            <to id="_getJiraIssues" uri="http4://amock.io/api/tester6005/rest/api/3/issues/{issueIDs}"/>
             <log id="_logAPIResponse" loggingLevel="INFO" message="RECEIVED JIRA API CALL response: ${body}"/>
             <unmarshal id="_unmarshal1">
                 <custom ref="json"/>
